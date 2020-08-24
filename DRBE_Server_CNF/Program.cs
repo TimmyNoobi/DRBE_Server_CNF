@@ -13,6 +13,7 @@ using System.Net.Sockets;
 using System.Net;
 using System.Threading;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 namespace DRBE_Server_CNF
 {
@@ -49,6 +50,8 @@ namespace DRBE_Server_CNF
 
             Console.WriteLine("Please keep this window on");
 
+            AMT_read_bg.DoWork += new DoWorkEventHandler(AMT_read_bg_DoWork);
+            AMT_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(AMT_read_bg_RunWorkerCompleted);
 
             UI_search_bg.DoWork += new DoWorkEventHandler(UI_search_bg_DoWork);
             UI_search_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(UI_search_bg_RunWorkerCompleted);
@@ -88,61 +91,7 @@ namespace DRBE_Server_CNF
             }
             if(AMT_onflag)
             {
-                Process myProcess = new Process();
-                //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe");
-                myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\source\repos\DRBE_CPP1\Debug\DRBE_CPP1.exe");
-
-                myProcess.StartInfo.RedirectStandardInput = true;
-                //myProcess.StartInfo.WorkingDirectory = workingDirectory;
-                //myProcess.StartInfo.FileName = programFilePath;
-                //myProcess.StartInfo.Arguments = commandLineArgs;
-                myProcess.StartInfo.UseShellExecute = false;
-                myProcess.StartInfo.CreateNoWindow = false;
-                myProcess.StartInfo.RedirectStandardOutput = true;
-                myProcess.StartInfo.RedirectStandardError = true;
-                myProcess.Start();
-                myProcess.StandardInput.WriteLine("1900000000,60,500000,0.001,6,2,5,16,1,800,6,20,2,1,4,10");
-
-                //myProcess.StandardInput.WriteLine("12");
-                try
-                {
-
-                    string output = myProcess.StandardOutput.ReadLine();
-                    string outerr = myProcess.StandardError.ReadToEnd();
-                    //string str = "";
-
-                    myProcess.StandardInput.WriteLine("1900000000 60 500000 0.001 6 2 5 16 1 800 6 20 2 1 4 10");
-                    if (output.Length>0)
-                    {
-                        i = 0;
-                        while(i<output.Length)
-                        {
-                            if(output[i] == ',')
-                            {
-
-                            }
-                            else
-                            {
-                                strtemp += output[i].ToString();
-                            }
-                            i++;
-                        }
-                    }
-
-
-
-
-                    // reading errors and output async...
-                    Console.WriteLine(output);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(ex.ToString());
-
-                }
-                finally
-                {
-                }
+                AMT_read_bg.RunWorkerAsync();
             }
 
 
@@ -190,7 +139,88 @@ namespace DRBE_Server_CNF
         }
         #region AMT
         static private BackgroundWorker AMT_read_bg = new BackgroundWorker();
+        static private void AMT_read_bg_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            Console.WriteLine("Search Completed, tid " + Thread.CurrentThread.ManagedThreadId);
+        }
 
+        static private void AMT_read_bg_DoWork(object sender, DoWorkEventArgs e)
+        {
+            string output = "";
+            int i = 0;
+            string strtemp = "";
+
+            Process myProcess = new Process();
+            //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe");
+            myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\source\repos\DRBE_CPP1\Debug\DRBE_CPP1.exe");
+
+            myProcess.StartInfo.RedirectStandardInput = true;
+            //myProcess.StartInfo.WorkingDirectory = workingDirectory;
+            //myProcess.StartInfo.FileName = programFilePath;
+            //myProcess.StartInfo.Arguments = commandLineArgs;
+            myProcess.StartInfo.UseShellExecute = false;
+            myProcess.StartInfo.CreateNoWindow = false;
+            myProcess.StartInfo.RedirectStandardOutput = true;
+            myProcess.StartInfo.RedirectStandardError = true;
+            try
+            {
+                myProcess.Start();
+                myProcess.StandardInput.WriteLine("1900000000,60,500000,0.001,6,2,5,16,1,800,6,20,2,1,4,10");
+                myProcess.StandardInput.WriteLine("1900000000 60 500000 0.001 6 2 5 16 1 800 6 20 2 1 4 10");
+            }
+            catch(Exception ex)
+            {
+
+            }
+
+            while (true)
+            {
+                try
+                {
+
+                    output = myProcess.StandardOutput.ReadLine();
+                    //string outerr = myProcess.StandardError.ReadToEnd();
+                    //string str = "";
+
+                    
+                    if(output!=null)
+                    {
+                        i = 0;
+                        while (i < output.Length)
+                        {
+                            if (output[i] == ',')
+                            {
+                                strtemp = "";
+                            }
+                            else
+                            {
+                                strtemp += output[i].ToString();
+                            }
+                            i++;
+                        }
+                        Console.WriteLine(output);
+                    }
+                    else
+                    {
+                        Thread.Sleep(20);
+                    }
+
+
+
+
+                    // reading errors and output async...
+
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.ToString());
+
+                }
+                finally
+                {
+                }
+            }
+        }
         #endregion
 
         #region UI Communication
