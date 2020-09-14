@@ -24,6 +24,13 @@ namespace DRBE_Server_CNF
         static extern IntPtr GetConsoleWindow();
         [DllImport("user32.dll")]
         static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")]
+        static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        static readonly IntPtr HWND_TOP = new IntPtr(0);
+        const UInt32 SWP_FRAMECHANGED = 0x0020;  /* The frame changed: send WM_NCCALCSIZE */
+        const UInt32 SWP_SHOWWINDOW = 0x0040;
+        static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+
         const int SW_HIDE = 0;
         const int SW_SHOW = 5;
 
@@ -34,11 +41,15 @@ namespace DRBE_Server_CNF
 
         static private bool Matlab_onflag = false;
         static private bool AMT_onflag = true;
+        static private bool Unity_onflag = true;
 
+        static private bool UI_Write_DONE = true;
 
-
+        static bool Program_close_flag = false;
         static void Main(string[] args)
         {
+            
+
             int i = 0;
             string strtemp = "";
             var handle = GetConsoleWindow();
@@ -49,9 +60,13 @@ namespace DRBE_Server_CNF
             //ShowWindow(handle, SW_SHOW);
 
             Console.WriteLine("Please keep this window on");
+            Unity_read_bg.DoWork += new DoWorkEventHandler(Unity_read_bg_DoWork);
+            Unity_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(Unity_read_bg_RunWorkerCompleted);
+            //Unity_read_bg.RunWorkerAsync();
 
             AMT_read_bg.DoWork += new DoWorkEventHandler(AMT_read_bg_DoWork);
             AMT_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(AMT_read_bg_RunWorkerCompleted);
+            AMT_read_bg.RunWorkerAsync();
 
             UI_search_bg.DoWork += new DoWorkEventHandler(UI_search_bg_DoWork);
             UI_search_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(UI_search_bg_RunWorkerCompleted);
@@ -74,6 +89,8 @@ namespace DRBE_Server_CNF
             UN_read_bg.DoWork += new DoWorkEventHandler(UN_read_bg_DoWork);
             UN_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(UN_read_bg_RunWorkerCompleted);
 
+
+
             if (Matlab_onflag)
             {
                 Process mp = new Process();
@@ -89,10 +106,7 @@ namespace DRBE_Server_CNF
                 mp.Start();
                 mp.StandardInput.WriteLine(cmdtxt);
             }
-            if(AMT_onflag)
-            {
-                AMT_read_bg.RunWorkerAsync();
-            }
+
 
 
             //System.Diagnostics.Process.Start(@"C:\Program Files\MATLAB\R2019b\bin\matlab.exe");
@@ -107,10 +121,16 @@ namespace DRBE_Server_CNF
             //Matlab_Port.Start(Matlab_Port_addr, Matlab_Port_port, request_manager);
             //Thread.Sleep(500);
 
-            while(true)
+            while (!Program_close_flag)
             {
                 Thread.Sleep(500);
             }
+            Thread.Sleep(500);
+            Console.WriteLine("Closing");
+            myProcess.Kill();
+            myProcess.WaitForExit();
+            Environment.Exit(0);
+            //return;
             //while (true)
             //{
             //    if(UWP_Port.UI_wirte_stream_connected_flag != UI_Port_flag_old)
@@ -144,13 +164,18 @@ namespace DRBE_Server_CNF
             Console.WriteLine("Search Completed, tid " + Thread.CurrentThread.ManagedThreadId);
         }
 
+
+        static private List<double> GE_STATS = new List<double>();
+        static private List<byte> GE_STATS_B = new List<byte>();
+        static Process myProcess = new Process();
         static private void AMT_read_bg_DoWork(object sender, DoWorkEventArgs e)
         {
+            UInt16 len = 0;
             string output = "";
             int i = 0;
             string strtemp = "";
-
-            Process myProcess = new Process();
+            string smode = "N";
+            
             //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe");
             myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\source\repos\DRBE_CPP1\Debug\DRBE_CPP1.exe");
 
@@ -181,16 +206,51 @@ namespace DRBE_Server_CNF
                     output = myProcess.StandardOutput.ReadLine();
                     //string outerr = myProcess.StandardError.ReadToEnd();
                     //string str = "";
-
-                    
                     if(output!=null)
                     {
+                        //Console.WriteLine(output);
                         i = 0;
                         while (i < output.Length)
                         {
-                            if (output[i] == ',')
+                            if (output[i] == '{')
                             {
                                 strtemp = "";
+                            }
+                            else if(output[i] == '}')
+                            {
+                                if(strtemp == "G" && smode == "N")
+                                {
+                                    smode = "G";
+                                    GE_STATS.Clear();
+                                    GE_STATS_B.Clear();
+
+                                }
+                                else if (strtemp == "G" && smode == "G")
+                                {
+                                    smode = "N";
+                                    len = (UInt16)GE_STATS_B.Count();
+                                    GE_STATS_B.Insert(0, 0x41);
+                                    GE_STATS_B.Insert(1, BitConverter.GetBytes(len)[1]);
+                                    GE_STATS_B.Insert(2, BitConverter.GetBytes(len)[0]);
+                                    //Console.WriteLine(BitConverter.ToString(GE_STATS_B.ToArray()));
+                                    if (UI_wirte_stream_connected_flag)
+                                    {
+                                        UI_nwStreamread.Write(GE_STATS_B.ToArray(), 0, GE_STATS_B.Count);
+                                        UI_nwStreamread.Flush();
+                                        UI_Write_DONE = true;
+                                        //Console.WriteLine("Send to UI");
+                                    }
+                                }
+                                else if (strtemp == "P")
+                                {
+                                    smode = "P";
+                                }
+                                else if(smode == "G")
+                                {
+                                    GE_STATS.Add(S_D(strtemp));
+                                    //Console.WriteLine((GE_STATS.Count - 1).ToString() + ":" + GE_STATS[GE_STATS.Count - 1].ToString());
+                                    GE_STATS_B.AddRange(BitConverter.GetBytes(GE_STATS[GE_STATS.Count - 1]));
+                                }
                             }
                             else
                             {
@@ -198,10 +258,11 @@ namespace DRBE_Server_CNF
                             }
                             i++;
                         }
-                        Console.WriteLine(output);
+                        //Console.WriteLine(output);
                     }
                     else
                     {
+                        //Console.WriteLine("Bad");
                         Thread.Sleep(20);
                     }
 
@@ -219,6 +280,63 @@ namespace DRBE_Server_CNF
                 finally
                 {
                 }
+            }
+        }
+        #endregion
+
+        #region Unity
+        static private BackgroundWorker Unity_read_bg = new BackgroundWorker();
+        static private void Unity_read_bg_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            Console.WriteLine("Search Completed, tid " + Thread.CurrentThread.ManagedThreadId);
+        }
+
+
+        static private List<double> Unity_STATS = new List<double>();
+        static private List<byte> Unity_STATS_B = new List<byte>();
+        static Process UNProcess;
+        static private void Unity_read_bg_DoWork(object sender, DoWorkEventArgs e)
+        {
+
+
+            int i = 0;
+
+            UNProcess = new Process();
+            UNProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\TimT1\WTestbuild\TimT1.exe");
+
+            UNProcess.StartInfo.RedirectStandardInput = true;
+            //myProcess.StartInfo.WorkingDirectory = workingDirectory;
+            //myProcess.StartInfo.FileName = programFilePath;
+            UNProcess.StartInfo.Arguments = "-popupwindow";
+            UNProcess.StartInfo.UseShellExecute = false;
+            UNProcess.StartInfo.CreateNoWindow = false;
+            UNProcess.StartInfo.RedirectStandardOutput = true;
+            UNProcess.StartInfo.RedirectStandardError = true;
+
+            try
+            {
+                UNProcess.Start();
+                
+                while (UNProcess.MainWindowHandle == IntPtr.Zero)
+                {
+
+                    Thread.Sleep(20);
+
+                }
+                //SetWindowPos(myProcess.MainWindowHandle, HWND_TOPMOST, 0, 0, 500, 500, 0x0200);
+                //Console.WriteLine("Window Changed \r\n \r\n");
+                while (Unity_on_flag)
+                {
+                    SetWindowPos(UNProcess.MainWindowHandle, HWND_TOPMOST, 10, 175, 1520, 600, 0x0200);
+                //    Console.WriteLine("Window Changed \r\n \r\n");
+                    Thread.Sleep(500);
+                }
+
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString() + "\r\n \r\n");
             }
         }
         #endregion
@@ -265,9 +383,14 @@ namespace DRBE_Server_CNF
                         }
                         catch (Exception ex)
                         {
+
+
                             Console.WriteLine(ex.ToString());
                             UI_wirte_stream_connected_flag = false;
-                            Console.WriteLine("Restart server port: " + UI_listener.LocalEndpoint.ToString());
+
+                            Console.WriteLine("Restart server port UI: " + UI_listener.LocalEndpoint.ToString());
+
+                            Program_close_flag = true;
 
                             UI_listener.Stop();
                             UI_search_bg.Dispose();
@@ -291,6 +414,7 @@ namespace DRBE_Server_CNF
                     else
                     {
                         Console.WriteLine("Client disconnect");
+
                         Thread.Sleep(2000);
                         break;
 
@@ -322,8 +446,12 @@ namespace DRBE_Server_CNF
         //Index 3, Len, LSB
         //Index 4, Command
         //Index len + 7, device, match for correction
+
+        static bool Unity_on_flag = false;
         static private void UI_Packet_receiver(byte x)
         {
+            int i = 0;
+            string temp = "";
             //Console.WriteLine(x.ToString());
             UI_Packet_receiver_result.Add(x);
             UI_Packet_receiver_index++;
@@ -344,6 +472,38 @@ namespace DRBE_Server_CNF
             else if (UI_Packet_receiver_index == 4)
             {
                 UI_Packet_command = x;
+            }
+            else if((UI_Packet_receiver_index == UI_Packet_len)  && (UI_device == 0x02))
+            {
+                i = 4;
+                while(i<UI_Packet_receiver_result.Count)
+                {
+                    temp += BitConverter.ToDouble(UI_Packet_receiver_result.GetRange(i,8).ToArray(),0).ToString() + " ";
+                    i += 8;
+                }
+                myProcess.StandardInput.WriteLine(temp);
+                Console.WriteLine("Send to AMT: " + temp);
+                UI_Packet_receiver_result = new List<byte>();
+                temp = "";
+                UI_Packet_receiver_index = 0;
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x06))
+            {
+                if(UI_Packet_command == 0x01)
+                {
+                    Unity_on_flag = true;
+                    Unity_read_bg.RunWorkerAsync();
+                    Console.WriteLine("Unity Start");
+                }else if(UI_Packet_command == 0x02)
+                {
+                    Unity_on_flag = false;
+                    UNProcess.Kill();
+                    UNProcess.WaitForExit();
+                    //Unity_read_bg.DoWork += new DoWorkEventHandler(Unity_read_bg_DoWork);
+                    //Unity_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(Unity_read_bg_RunWorkerCompleted);
+                }
+                UI_Packet_receiver_index = 0;
+                UI_Packet_receiver_result = new List<byte>();
             }
             else if (UI_Packet_receiver_index == UI_Packet_len + 7)
             {
@@ -436,6 +596,9 @@ namespace DRBE_Server_CNF
                         UI_nwStreamwrite = UI_client.GetStream();
                         UI_wirte_stream_connected_flag = true;
                         UI_read_bg.RunWorkerAsync();
+                        
+                        //AMT_read_bg.RunWorkerAsync();
+                        
                         break;
                     }
                 }
@@ -444,6 +607,7 @@ namespace DRBE_Server_CNF
                     Console.WriteLine("Client Search: " + ex.ToString());
                     UI_wirte_stream_connected_flag = false;
                     Thread.Sleep(1000);
+
                 }
             }
 
@@ -680,7 +844,7 @@ namespace DRBE_Server_CNF
 
         #endregion
 
-        #region ML Communication
+        #region UN Communication
 
         //Initiate Server Port
         //static public UI_Server UWP_Port = new UI_Server();   
@@ -805,29 +969,8 @@ namespace DRBE_Server_CNF
             }
             else if (UN_Packet_receiver_index == UN_Packet_len + 7)
             {
-                if (UN_device != x)
-                {
-                    Console.WriteLine("Error: " + BitConverter.ToString(UN_Packet_receiver_result.ToArray()));
-                }
-                else
-                {
-                    if (UN_Packet_command == 0x10 && ML_wirte_stream_connected_flag)
-                    {
-                        Console.WriteLine("Send to Matlab: " + ML_Packet_receiver_result.Count.ToString());
-                        UN_nwStreamwrite.Write(ML_Packet_receiver_result.ToArray(), 0, ML_Packet_receiver_result.Count);
-                        UN_nwStreamwrite.Flush();
-                    }
-                    Console.WriteLine("Received: " + BitConverter.ToString(UN_Packet_receiver_result.ToArray()));
-                    UN_Packet_receiver_result[3] = 0x0F;
-                    UN_nwStreamread.Write(UN_Packet_receiver_result.ToArray(), 0, UN_Packet_receiver_result.Count);
-                    UN_nwStreamread.Flush();
-                    //Console.WriteLine("Sent: " + BitConverter.ToString(Packet_receiver_result.ToArray()));
-                    //requestManagement.Request(Packet_receiver_result);
-                    UN_Packet_receiver_result = new List<byte>();
 
-                }
                 UN_Packet_receiver_index = 0;
-
             }
             else
             {
@@ -907,6 +1050,336 @@ namespace DRBE_Server_CNF
 
         }
 
-        #endregion 
+        #endregion
+
+        #region others
+        static private List<byte> D_Fixed(double x, int ger, int fra)
+        {
+            List<byte> result = new List<byte>();
+
+            int i = 0;
+            int dger = (int)x;
+            double dfra = x - (int)x;
+            UInt32 temp = 0;
+            int refger = (int)Math.Pow(2, ger);
+            double reffra = 1 / 2;
+
+            while (i < ger)
+            {
+                if (dger >= refger)
+                {
+                    temp += 1;
+                    dger = dger - refger;
+                }
+                temp = temp << 1;
+                refger = refger / 2;
+                i++;
+            }
+            i = 0;
+            while (i < fra)
+            {
+                if (dfra > reffra)
+                {
+                    temp += 1;
+                    dfra -= reffra;
+                    reffra /= 2;
+                }
+
+                temp = temp << 1;
+                i++;
+            }
+
+            result = new List<byte>(BitConverter.GetBytes(temp));
+
+
+            return result;
+        }
+
+        static private double D_Fixed_d(double x, int ger, int fra)
+        {
+            double result = 0;
+
+            int i = 0;
+            int dger = (int)x;
+            double dfra = x - (int)x;
+            UInt32 temp = 0;
+            int refger = (int)Math.Pow(2, ger);
+            double reffra = 1 / 2;
+
+            while (i < ger)
+            {
+                if (dger >= refger)
+                {
+                    temp += 1;
+                    dger = dger - refger;
+                }
+                temp = temp << 1;
+                refger = refger / 2;
+                i++;
+            }
+            i = 0;
+            while (i < fra)
+            {
+                if (dfra > reffra)
+                {
+                    temp += 1;
+                    dfra -= reffra;
+                    reffra /= 2;
+                }
+
+                temp = temp << 1;
+                i++;
+            }
+
+            result = temp;
+
+
+            return result;
+        }
+        static private byte S_B(string x)
+        {
+            byte result = 0;
+            int temp = S_H(x);
+            result = BitConverter.GetBytes(temp)[0];
+            //ShowDialog(BitConverter.ToString(BitConverter.GetBytes(temp)), result.ToString());
+            return result;
+        }
+        static private double S_D(string x)
+        {
+            double result = 0;
+            double sign = 1;
+            string before = "";
+            string after = "";
+            int i = 0;
+            int tenpower = 1;
+            int len = x.Length;
+            int beforeflag = 0;
+            if (len >= 1)
+            {
+                if (x[0] == '-')
+                {
+                    sign = -1;
+                }
+            }
+            while (i < len)
+            {
+                if (beforeflag == 0 && x[i] != '.')
+                {
+                    before += x[i].ToString();
+                }
+                else if (beforeflag == 1 && x[i] != '.')
+                {
+                    after += x[i].ToString();
+                    tenpower = tenpower * 10;
+                }
+                else if (x[i] == '.')
+                {
+                    beforeflag = 1;
+                }
+                else if (x[i] == '-')
+                {
+                    //sign = -1;
+                }
+                else
+                {
+                    //sign = -1;
+                }
+                i++;
+            }
+            result = S_I_vd(before) + (S_I_vd(after)) / tenpower;
+            result = result * sign;
+            return result;
+        }
+        static private double S_I_vd(string x)
+        {
+            double result = 0;
+            int index = 0;
+            int rindex = 0;
+            index = x.Length;
+            while (index > 0)
+            {
+                if (C_I(x[rindex]) != -1)
+                {
+                    result = result * 10 + C_I(x[rindex]);
+                }
+                else
+                {
+
+                }
+
+                rindex++;
+                index--;
+            }
+            return result;
+        }
+        static private int S_I(string x)
+        {
+            int result = 0;
+            int index = 0;
+            int rindex = 0;
+            index = x.Length;
+            while (index > 0)
+            {
+                if (C_I(x[rindex]) != -1)
+                {
+                    result = result * 10 + C_I(x[rindex]);
+                }
+                else
+                {
+
+                }
+
+                rindex++;
+                index--;
+            }
+            return result;
+        }
+        static private int C_I(char x)
+        {
+            int reint = 0;
+            if (x == '0')
+            {
+                reint = 0;
+            }
+            else if (x == '1')
+            {
+                reint = 1;
+            }
+            else if (x == '2')
+            {
+                reint = 2;
+
+            }
+            else if (x == '3')
+            {
+                reint = 3;
+            }
+            else if (x == '4')
+            {
+                reint = 4;
+            }
+            else if (x == '5')
+            {
+                reint = 5;
+            }
+            else if (x == '6')
+            {
+                reint = 6;
+            }
+            else if (x == '7')
+            {
+                reint = 7;
+            }
+            else if (x == '8')
+            {
+                reint = 8;
+            }
+            else if (x == '9')
+            {
+                reint = 9;
+            }
+            else
+            {
+                reint = -1;
+            }
+            return reint;
+        }
+        static private int S_H(string x)
+        {
+            int result = 0;
+            int index = 0;
+            int rindex = 0;
+            index = x.Length;
+            while (index > 0)
+            {
+                if (C_H(x[rindex]) != -1)
+                {
+                    result = result * 16 + C_H(x[rindex]);
+                }
+                else
+                {
+
+                }
+
+                rindex++;
+                index--;
+            }
+            return result;
+        }
+        static private int C_H(char x)
+        {
+            int reint = 0;
+            if (x == '0')
+            {
+                reint = 0;
+            }
+            else if (x == '1')
+            {
+                reint = 1;
+            }
+            else if (x == '2')
+            {
+                reint = 2;
+
+            }
+            else if (x == '3')
+            {
+                reint = 3;
+            }
+            else if (x == '4')
+            {
+                reint = 4;
+            }
+            else if (x == '5')
+            {
+                reint = 5;
+            }
+            else if (x == '6')
+            {
+                reint = 6;
+            }
+            else if (x == '7')
+            {
+                reint = 7;
+            }
+            else if (x == '8')
+            {
+                reint = 8;
+            }
+            else if (x == '9')
+            {
+                reint = 9;
+            }
+            else if (x == 'a' || x == 'A')
+            {
+                reint = 10;
+            }
+            else if (x == 'b' || x == 'B')
+            {
+                reint = 11;
+            }
+            else if (x == 'c' || x == 'C')
+            {
+                reint = 12;
+            }
+            else if (x == 'd' || x == 'D')
+            {
+                reint = 13;
+            }
+            else if (x == 'e' || x == 'E')
+            {
+                reint = 14;
+            }
+            else if (x == 'f' || x == 'F')
+            {
+                reint = 15;
+            }
+            else
+            {
+                reint = -1;
+            }
+            return reint;
+        }
+        #endregion
     }
 }
