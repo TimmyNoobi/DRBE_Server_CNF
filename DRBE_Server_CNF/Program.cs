@@ -11,6 +11,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Net.Sockets;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Threading;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -63,6 +64,10 @@ namespace DRBE_Server_CNF
             Unity_read_bg.DoWork += new DoWorkEventHandler(Unity_read_bg_DoWork);
             Unity_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(Unity_read_bg_RunWorkerCompleted);
             //Unity_read_bg.RunWorkerAsync();
+
+            FPGA_search_bg.DoWork += new DoWorkEventHandler(FPGA_search_bg_DoWork);
+            FPGA_search_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(FPGA_search_bg_RunWorkerCompleted);
+            FPGA_search_bg.RunWorkerAsync();
 
             AMT_read_bg.DoWork += new DoWorkEventHandler(AMT_read_bg_DoWork);
             AMT_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(AMT_read_bg_RunWorkerCompleted);
@@ -167,7 +172,10 @@ namespace DRBE_Server_CNF
 
         static private List<double> GE_STATS = new List<double>();
         static private List<byte> GE_STATS_B = new List<byte>();
+        static private List<byte> Total_AMT_buffer = new List<byte>();
+        static int AMT_current_copy = 0;
         static Process myProcess = new Process();
+        
         static private void AMT_read_bg_DoWork(object sender, DoWorkEventArgs e)
         {
             UInt16 len = 0;
@@ -190,8 +198,8 @@ namespace DRBE_Server_CNF
             try
             {
                 myProcess.Start();
-                myProcess.StandardInput.WriteLine("1900000000,60,500000,0.001,6,2,5,16,1,800,6,20,2,1,4,10");
-                myProcess.StandardInput.WriteLine("1900000000 60 500000 0.001 6 2 5 16 1 800 6 20 2 1 4 10");
+                //myProcess.StandardInput.WriteLine("1900000000,60,500000,0.001,6,2,5,16,1,800,6,20,2,1,4,10");
+                //myProcess.StandardInput.WriteLine("1900000000 60 500000 0.001 6 2 5 16 1 800 6 20 2 1 4 10");
             }
             catch(Exception ex)
             {
@@ -232,12 +240,19 @@ namespace DRBE_Server_CNF
                                     GE_STATS_B.Insert(0, 0x41);
                                     GE_STATS_B.Insert(1, BitConverter.GetBytes(len)[1]);
                                     GE_STATS_B.Insert(2, BitConverter.GetBytes(len)[0]);
-                                    //Console.WriteLine(BitConverter.ToString(GE_STATS_B.ToArray()));
-                                    if (UI_wirte_stream_connected_flag)
+
+                                    Total_AMT_buffer.AddRange(GE_STATS_B);
+                                    AMT_current_copy++;
+                                    //Console.WriteLine("AMT write back: " + AMT_current_copy.ToString() + "   " + UI_amt_copy_no.ToString());
+                                    if (UI_wirte_stream_connected_flag && AMT_current_copy==UI_amt_copy_no && UI_amt_copy_no > 0)
                                     {
-                                        UI_nwStreamread.Write(GE_STATS_B.ToArray(), 0, GE_STATS_B.Count);
+                                        //Console.WriteLine("AMT write back inside: " + AMT_current_copy.ToString() + "   " + UI_amt_copy_no.ToString());
+                                        UI_nwStreamread.Write(Total_AMT_buffer.ToArray(), 0, Total_AMT_buffer.Count);
                                         UI_nwStreamread.Flush();
                                         UI_Write_DONE = true;
+                                        Total_AMT_buffer.Clear();
+                                        AMT_current_copy = 0;
+                                        UI_amt_copy_no = 0;
                                         //Console.WriteLine("Send to UI");
                                     }
                                 }
@@ -282,6 +297,186 @@ namespace DRBE_Server_CNF
                 }
             }
         }
+        #endregion
+
+        #region FPGA
+        static public string FPGA_Port_addr = "192.168.1.11";
+
+        static public int FPGA_Port_port = 7;
+        static private BackgroundWorker FPGA_search_bg = new BackgroundWorker();
+        static private BackgroundWorker FPGA_read_bg = new BackgroundWorker();
+        static private void FPGA_search_bg_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            Console.WriteLine("Search Completed, tid " + Thread.CurrentThread.ManagedThreadId);
+        }
+
+        static public bool FPGA_Connected_flag = false;
+
+        static public NetworkStream FPGA_Stream;
+        static private void FPGA_search_bg_DoWork(object sender, DoWorkEventArgs e)
+        {
+            TcpClient client;
+            IPGlobalProperties ipGlobalProperties;
+            TcpConnectionInformation[] tcpConnInfoArray;
+            int port = 7; //<--- This is your value
+            while (true)
+            {
+                if(!FPGA_Connected_flag)
+                {
+                    try
+                    {
+                        Console.WriteLine("Try To Connect FPGA");
+                        client = new TcpClient(FPGA_Port_addr, FPGA_Port_port);
+                        Console.WriteLine("FPGA Connect Success:  " + client.Connected.ToString());
+                        FPGA_Connected_flag = client.Connected;
+                        FPGA_Stream = client.GetStream();
+
+                        FPGA_read_bg.DoWork += new DoWorkEventHandler(FPGA_read_bg_DoWork);
+                        FPGA_read_bg.RunWorkerCompleted += new RunWorkerCompletedEventHandler(FPGA_read_bg_RunWorkerCompleted);
+                        FPGA_read_bg.RunWorkerAsync();
+
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Error: FPGA not Found");
+                        Thread.Sleep(1000);
+
+
+                    }
+                }else
+                {
+                    Thread.Sleep(500);
+                }
+
+            }
+        }
+
+
+        static private void FPGA_read_bg_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            Console.WriteLine("FPGA Read Completed, tid " + Thread.CurrentThread.ManagedThreadId);
+        }
+        static private int FPGA_mode = 0;
+        static private List<byte> FPGA_Sc_Update_Data = new List<byte>();
+        static private void FPGA_read_bg_DoWork(object sender, DoWorkEventArgs e)
+        {
+            while(true)
+            {
+                try
+                {
+                    Byte[] data = new Byte[256];
+                    String responseData = String.Empty;
+                    Int32 bytes = FPGA_Stream.Read(data, 0, data.Length);
+
+                    //responseData = System.Text.Encoding.ASCII.GetString(data, 0, bytes);
+                    //Console.WriteLine("Received: {0}", responseData);
+
+                    List<byte> rdata = new List<byte>(data);
+
+                    FPGA_Sc_Updater(rdata.GetRange(0,bytes));
+                    
+                }
+                catch(Exception ex)
+                {
+                    FPGA_Connected_flag = false;
+                    Console.WriteLine(ex.ToString());
+                    break;
+                }
+            }
+        }
+        static int FPGA_Sc_Update_Delay = 1000;
+        static private void FPGA_Sc_Updater(List<byte> x)
+        {
+            int len = 0;
+            int i = 0;
+            FPGA_Sc_Update_Data.AddRange(x);
+            if(FPGA_Sc_Update_Data.Count>=3)
+            {
+                len = FPGA_Sc_Update_Data[1] * 255 + FPGA_Sc_Update_Data[2];
+                if(FPGA_Sc_Update_Data.Count>= len)
+                {
+                    Console.WriteLine("Received a frame: " + BitConverter.ToString(FPGA_Sc_Update_Data.ToArray()));
+                    i = 4;
+                    Console.Write("Convert to double: " );
+                    while (i<FPGA_Sc_Update_Data.Count)
+                    {
+                        Console.Write(BitConverter.ToDouble(FPGA_Sc_Update_Data.ToArray(), i) + " , ");
+                        i += 8;
+                    }
+                    Console.WriteLine("");
+                    if (FPGA_mode == 1)
+                    {
+                        FPGA_Stream.Write(FPGA_Sc_Update_Data.ToArray(), 0, FPGA_Sc_Update_Data.Count);
+                        Console.WriteLine("Send FPGA update ");
+                        UN_nwStreamread.Write(FPGA_Sc_Update_Data.ToArray(), 0, FPGA_Sc_Update_Data.Count);
+                        UN_nwStreamread.Flush();
+
+                        Thread.Sleep(FPGA_Sc_Update_Delay);
+                    }else if(FPGA_mode == 2)
+                    {
+                        //FPGA_Stream.Write(FPGA_Sc_Update_Data.ToArray(), 0, FPGA_Sc_Update_Data.Count);
+                        //Console.WriteLine("Send FPGA update ");
+                        FPGA_mode = 0;
+                    }
+                    FPGA_Sc_Update_Data.Clear();
+                }
+            }
+
+
+        }
+        //static void FPGAConnect(String server, String message)
+        //{
+        //    try
+        //    {
+        //        // Create a TcpClient.
+        //        // Note, for this client to work you need to have a TcpServer
+        //        // connected to the same address as specified by the server, port
+        //        // combination.
+        //        Int32 port = 7;
+        //        TcpClient client = new TcpClient(server, port);
+
+        //        // Translate the passed message into ASCII and store it as a Byte array.
+        //        Byte[] data = System.Text.Encoding.ASCII.GetBytes(message);
+
+        //        // Get a client stream for reading and writing.
+        //        //  Stream stream = client.GetStream();
+
+        //        NetworkStream stream = client.GetStream();
+
+        //        // Send the message to the connected TcpServer.
+        //        stream.Write(data, 0, data.Length);
+
+        //        Console.WriteLine("Sent: {0}", message);
+
+        //        // Receive the TcpServer.response.
+
+        //        // Buffer to store the response bytes.
+        //        data = new Byte[256];
+
+        //        // String to store the response ASCII representation.
+        //        String responseData = String.Empty;
+
+        //        // Read the first batch of the TcpServer response bytes.
+        //        Int32 bytes = stream.Read(data, 0, data.Length);
+        //        responseData = System.Text.Encoding.ASCII.GetString(data, 0, bytes);
+        //        Console.WriteLine("Received: {0}", responseData);
+
+        //        // Close everything.
+        //        stream.Close();
+        //        client.Close();
+        //    }
+        //    catch (ArgumentNullException e)
+        //    {
+        //        Console.WriteLine("ArgumentNullException: {0}", e);
+        //    }
+        //    catch (SocketException e)
+        //    {
+        //        Console.WriteLine("SocketException: {0}", e);
+        //    }
+
+        //    Console.WriteLine("\n Press Enter to continue...");
+        //    Console.Read();
+        //}
         #endregion
 
         #region Unity
@@ -438,7 +633,8 @@ namespace DRBE_Server_CNF
 
         static private byte UI_Packet_command = 0x00;
 
-
+        static int UI_Scan_No = 0;
+        static int UI_amt_copy_no = 0;
         //Store byte in Packet_receiver_result;
         //Byte index tracked in Packet_receiver_index, start from 1;
         //Index 1, device
@@ -475,6 +671,14 @@ namespace DRBE_Server_CNF
             }
             else if((UI_Packet_receiver_index == UI_Packet_len)  && (UI_device == 0x02))
             {
+                if(UI_Packet_command== 0x00)
+                {
+                    UI_Scan_No++;
+                }else if(UI_Packet_command == 0x01)
+                {
+                    UI_amt_copy_no = UI_Scan_No + 1;
+                    UI_Scan_No = 0;
+                }
                 i = 4;
                 while(i<UI_Packet_receiver_result.Count)
                 {
@@ -504,6 +708,54 @@ namespace DRBE_Server_CNF
                 }
                 UI_Packet_receiver_index = 0;
                 UI_Packet_receiver_result = new List<byte>();
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x07))
+            {
+                UN_nwStreamread.Write(UI_Packet_receiver_result.ToArray(), 0, UI_Packet_receiver_result.Count);
+                UN_nwStreamread.Flush();
+                Console.WriteLine("Try to send: " + BitConverter.ToString(UI_Packet_receiver_result.ToArray()));
+                UI_Packet_receiver_result = new List<byte>();
+                UI_Packet_receiver_index = 0;
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x08) && UI_Packet_command == 2)
+            {
+                Console.WriteLine("Start Playing");
+                if(FPGA_Connected_flag)
+                {
+                    FPGA_Stream.Write(UI_Packet_receiver_result.ToArray(), 0, UI_Packet_receiver_result.Count);
+                    FPGA_mode = 1;
+                }
+                UI_Packet_receiver_result.Clear();
+                UI_Packet_receiver_index = 0;
+
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x08) && UI_Packet_command == 3)
+            {
+                Console.WriteLine("Stopped Playing");
+                FPGA_mode = 0;
+                UI_Packet_receiver_result.Clear();
+                UI_Packet_receiver_index = 0;
+
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x08) && UI_Packet_command == 4)
+            {
+                Console.WriteLine("Set Speed: ");
+                FPGA_Sc_Update_Delay = UI_Packet_receiver_result[4] * 255 + UI_Packet_receiver_result[5];
+                UI_Packet_receiver_result.Clear();
+                UI_Packet_receiver_index = 0;
+
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x08) && UI_Packet_command == 5)
+            {
+                Console.WriteLine("Send Debug Signal: " + BitConverter.ToString(UI_Packet_receiver_result.ToArray()));
+                if (FPGA_Connected_flag)
+                {
+                    FPGA_Stream.Write(UI_Packet_receiver_result.ToArray(), 0, UI_Packet_receiver_result.Count);
+                    FPGA_mode = 2;
+                }
+                UI_Packet_receiver_result.Clear();
+                UI_Packet_receiver_index = 0;
+
             }
             else if (UI_Packet_receiver_index == UI_Packet_len + 7)
             {
@@ -848,8 +1100,10 @@ namespace DRBE_Server_CNF
 
         //Initiate Server Port
         //static public UI_Server UWP_Port = new UI_Server();   
+
         static public string UN_Port_addr = "127.0.0.1";
         static public int UN_Port_port = 8300;
+
 
         //Initiate TCP Listener + Client + read + write stream
         static private TcpListener UN_listener;
@@ -927,6 +1181,7 @@ namespace DRBE_Server_CNF
             }
         }
 
+
         static private int UN_Packet_receiver_index = 0;
         static private int UN_Packet_len = 0;
 
@@ -946,7 +1201,7 @@ namespace DRBE_Server_CNF
         //Index len + 7, device, match for correction
         static private void UN_Packet_receiver(byte x)
         {
-            //Console.WriteLine(x.ToString());
+            Console.Write(x.ToString());
             UN_Packet_receiver_result.Add(x);
             UN_Packet_receiver_index++;
             if (UN_Packet_receiver_index == 1)
@@ -961,7 +1216,6 @@ namespace DRBE_Server_CNF
             else if (UN_Packet_receiver_index == 3)
             {
                 UN_Packet_len = UN_Packet_len * 255 + x;
-                Console.WriteLine("Packet Length: " + UN_Packet_len.ToString());
             } // length LS
             else if (UN_Packet_receiver_index == 4)
             {
@@ -977,6 +1231,14 @@ namespace DRBE_Server_CNF
 
             }
 
+            if(UN_Packet_receiver_index == 3 && UN_device == 0x22)
+            {
+                UI_nwStreamread.Write(UN_Packet_receiver_result.ToArray(), 0, UN_Packet_receiver_result.Count);
+                UI_nwStreamread.Flush();
+                Console.WriteLine("Packet sent: " + BitConverter.ToString(UN_Packet_receiver_result.ToArray()));
+                UN_Packet_receiver_result.Clear();
+                UN_Packet_receiver_index = 0;
+            }
 
             if (ML_Read_done)
             {
@@ -1018,6 +1280,7 @@ namespace DRBE_Server_CNF
             try
             {
                 UN_listener = new TcpListener(IPAddress.Parse(UN_Port_addr), UN_Port_port);
+                //UN_listener = new TcpListener(IPAddress.Any, 7);
                 UN_listener.Start();
                 Console.WriteLine("Try to listen to port: " + UN_listener.LocalEndpoint.ToString());
             }
