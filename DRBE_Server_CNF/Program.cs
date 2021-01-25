@@ -20,7 +20,10 @@ namespace DRBE_Server_CNF
 {
     class Program
     {
-
+        //static string UnityPath = @"C:\Users\timli\TimT1\WTestbuild\TimT1.exe"; //Change this path to your Unity Folder
+                                                                                //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe");
+        static string UnityPath = @"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\TimT1.exe";
+        static string AMTPath = @"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe";
         [DllImport("kernel32.dll")]
         static extern IntPtr GetConsoleWindow();
         [DllImport("user32.dll")]
@@ -49,7 +52,10 @@ namespace DRBE_Server_CNF
         static bool Program_close_flag = false;
         static void Main(string[] args)
         {
-            
+
+
+
+
 
             int i = 0;
             string strtemp = "";
@@ -185,7 +191,8 @@ namespace DRBE_Server_CNF
             string smode = "N";
             
             //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\AppData\Local\Packages\106b18ec-5180-4642-8a0e-198353957681_kbtfgvzxh186t\LocalState\DRBE_CPP1.exe");
-            myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\source\repos\DRBE_CPP1\Debug\DRBE_CPP1.exe");
+            //myProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\source\repos\DRBE_CPP1\Debug\DRBE_CPP1.exe");
+            myProcess.StartInfo = new ProcessStartInfo(AMTPath);
 
             myProcess.StartInfo.RedirectStandardInput = true;
             //myProcess.StartInfo.WorkingDirectory = workingDirectory;
@@ -492,12 +499,15 @@ namespace DRBE_Server_CNF
         static Process UNProcess;
         static private void Unity_read_bg_DoWork(object sender, DoWorkEventArgs e)
         {
-
+            string unitypath = "";
 
             int i = 0;
 
             UNProcess = new Process();
-            UNProcess.StartInfo = new ProcessStartInfo(@"C:\Users\timli\TimT1\WTestbuild\TimT1.exe");
+            UNProcess.StartInfo = new ProcessStartInfo(UnityPath);
+            //unitypath = Path.Combine(Environment.CurrentDirectory, "Unity\\");
+            //unitypath = unitypath + "TimT1.exe";
+            //UNProcess.StartInfo = new ProcessStartInfo(unitypath);
 
             UNProcess.StartInfo.RedirectStandardInput = true;
             //myProcess.StartInfo.WorkingDirectory = workingDirectory;
@@ -668,6 +678,16 @@ namespace DRBE_Server_CNF
             else if (UI_Packet_receiver_index == 4)
             {
                 UI_Packet_command = x;
+            }
+            else if ((UI_Packet_receiver_index == UI_Packet_len) && (UI_device == 0x90))
+            {
+                string someString = Encoding.ASCII.GetString(UI_Packet_receiver_result.GetRange(3,UI_Packet_receiver_result.Count - 3).ToArray());
+                UnityPath = someString + "\\TimT1.exe";
+                AMTPath = someString + "\\DRBE_CPP1.exe";
+                Console.WriteLine("GUI APP Path : " + someString);
+
+                UI_Packet_receiver_result = new List<byte>();
+                UI_Packet_receiver_index = 0;
             }
             else if((UI_Packet_receiver_index == UI_Packet_len)  && (UI_device == 0x02))
             {
